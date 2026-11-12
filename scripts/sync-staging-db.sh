@@ -166,22 +166,35 @@ ssh "${PROD_SSH_OPTS[@]}" "${PROD_TARGET}" \
     "rm -rf ${STG_WP_PATH}/wp-content/plugins && mkdir -p ${STG_WP_PATH}/wp-content && tar -C ${STG_WP_PATH}/wp-content -xf -"
 
 echo "==> テーマディレクトリを確認します..."
+# 本番 DB の stylesheet は ytl-archive。ステージングへのデプロイ先は contentslibrary。
+# 欠けると白画面になるため、必要ならシンボリックリンクを張る。
 THEME_CHECK="$(ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" bash -s -- "${STG_WP_PATH}" <<'REMOTE'
 set -euo pipefail
 WP_PATH="$1"
 THEMES="${WP_PATH}/wp-content/themes"
-if [ -d "${THEMES}/ytl-archive" ]; then
+PROD_SLUG="ytl-archive"
+STG_SLUG="contentslibrary"
+
+if [ -e "${THEMES}/${PROD_SLUG}" ]; then
   echo "ok"
-else
-  echo "missing"
+  exit 0
 fi
+
+if [ -d "${THEMES}/${STG_SLUG}" ]; then
+  ln -s "${STG_SLUG}" "${THEMES}/${PROD_SLUG}"
+  echo "linked"
+  exit 0
+fi
+
+echo "missing"
 REMOTE
 )"
 
 case "${THEME_CHECK}" in
   ok) echo "  - テーマ ytl-archive: OK" ;;
+  linked) echo "  - テーマ ytl-archive -> contentslibrary のリンクを作成しました" ;;
   missing)
-    echo "警告: wp-content/themes/ytl-archive がありません。develop へデプロイしてください。" >&2
+    echo "警告: wp-content/themes/ytl-archive も contentslibrary もありません。develop へデプロイしてください。" >&2
     ;;
 esac
 
