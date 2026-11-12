@@ -22,7 +22,7 @@
 		<meta property="og:image" content="<?php echo get_template_directory_uri(); ?>/assets/images/ogimage.jpg" />
 	  <link href="<?php echo get_template_directory_uri(); ?>/assets/images/favicon.png" rel="shortcut icon" />
     <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.6.1/css/font-awesome.min.css">
-    <link rel="stylesheet" href="<?php echo get_template_directory_uri(); ?>/assets/css/styles.css">
+    <link rel="stylesheet" href="<?php echo esc_url( site_get_asset_uri( 'assets/css/styles.css' ) ); ?>">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@10/swiper-bundle.min.css" />
 		<?php wp_head(); ?>
   </head>

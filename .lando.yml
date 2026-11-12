@@ -1,0 +1,69 @@
+name: ytl-contentslibrary
+recipe: wordpress
+config:
+  php: '8.5'
+  via: apache
+  database: mysql:8.0
+  # WordPress本体を配置する場所（Lando内部で管理）
+  webroot: wordpress
+
+# テーマを wp-content にバインド（recipe の appserver は overrides.volumes が必要）
+services:
+  appserver:
+    # /usr/local/bin は匿名ボリュームのため、コンテナ再作成で wp が消えることがある
+    build_as_root:
+      - bash /app/scripts/ensure-wp-cli.sh
+    build:
+      - mkdir -p /app/database
+      - if [ ! -f /app/wordpress/wp-load.php ]; then wp core download --path=wordpress --locale=ja; fi
+      - |
+        if [ ! -f /app/wordpress/wp-config.php ]; then
+          cd /app/wordpress
+          wp config create \
+            --dbname=wordpress \
+            --dbuser=wordpress \
+            --dbpass=wordpress \
+            --dbhost=database \
+            --dbcharset=utf8 \
+            --skip-check
+        fi
+    overrides:
+      volumes:
+        - ./theme:/app/wordpress/wp-content/themes/ytl-archive
+        - ./database:/app/database
+  # Vite を動かすための Node サービス
+  node:
+    type: node:20
+    globals:
+      vite: latest
+  # 開発中のメールは外部へ送らず、Mailpit の受信箱に溜める
+  mailpit:
+    type: mailpit
+
+proxy:
+  mailpit:
+    - mailpit.ytl-contentslibrary.lndo.site
+
+# 便利なショートカット
+tooling:
+  npm:
+    service: node
+    dir: /app/theme
+  vite:
+    service: node
+    dir: /app/theme
+    cmd: npx vite
+  wp:
+    service: appserver
+    dir: /app/wordpress
+  sync-db:
+    service: appserver
+    dir: /app/wordpress
+    cmd: bash /app/scripts/sync-db.sh
+  sync-staging:
+    description: database/latest.sql と本番の plugins/ をステージングへ同期します（接続先は .lando.local.yml）
+    service: appserver
+    dir: /app
+    env:
+      STG_SSH_IDENTITY: /user/.ssh/peakingoh.pem
+    cmd: bash scripts/sync-staging-db.sh

@@ -1,0 +1,198 @@
+name: Deploy Theme
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    # サーバーへ送るテーマに影響する変更があるときだけ起動する。
+    # README など theme/ 以外だけのマージでは、ステージング・本番ともデプロイしない。
+    # Sass は転送しないが、CSS にコンパイルされるため対象に含める。
+    paths:
+      - "theme/**"
+      - "!theme/**/*.map"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+# Required GitHub Secrets:
+# - STG_SSH_HOST / STG_SSH_PORT / STG_SSH_USER / STG_SSH_PRIVATE_KEY
+# - PROD_SSH_HOST / PROD_SSH_PORT / PROD_SSH_USER / PROD_SSH_PRIVATE_KEY
+#
+# リモートパスは SSH ログイン後のホームからの相対パス。
+#
+# Deploy excludes (theme/): dev tooling, Sass sources.
+# Production also excludes *.map; staging deploys .map files for DevTools debugging.
+# style.css (theme root) is required by WordPress and is deployed.
+#
+# assets/manifest/asset-manifest.json holds content hashes used as ?ver= (see theme/inc/assets.php).
+# It is deployed in a separate step AFTER the theme so its hash never points at an older asset.
+
+jobs:
+  build-theme:
+    name: Build theme assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: theme/package-lock.json
+
+      - name: Install dependencies and build assets
+        working-directory: theme
+        run: npm ci && npm run build && rm -rf node_modules
+
+      - name: Generate asset manifest
+        run: node .github/scripts/generate-asset-manifest.js theme
+
+      - name: Upload built theme
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-dist
+          path: theme/
+          retention-days: 1
+
+  deploy-staging:
+    name: Deploy to Staging (SSH)
+    needs: build-theme
+    if: github.ref_name == 'develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOY_SSH_HOST: ${{ secrets.STG_SSH_HOST }}
+      DEPLOY_SSH_PORT: ${{ secrets.STG_SSH_PORT }}
+      DEPLOY_THEME_DIR: peakingoh-dev.com/public_html/ytl-contentslibrary/wp-content/themes/contentslibrary/
+    steps:
+      - name: Download built theme
+        uses: actions/download-artifact@v4
+        with:
+          name: theme-dist
+          path: theme
+
+      - name: Setup SSH and validate secrets
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.STG_SSH_PRIVATE_KEY }}
+          SSH_USER: ${{ secrets.STG_SSH_USER }}
+        run: |
+          if [ -z "$SSH_USER" ] || [ -z "$SSH_PRIVATE_KEY" ] || [ -z "$DEPLOY_SSH_HOST" ] || [ -z "$DEPLOY_SSH_PORT" ]; then
+            echo "::error::STG_SSH_USER / STG_SSH_PRIVATE_KEY / STG_SSH_HOST / STG_SSH_PORT のいずれかが未設定です。"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if ! ssh-keygen -l -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            echo "::error::STG_SSH_PRIVATE_KEY の形式が不正です。秘密鍵全文（BEGIN/END 行を含む）を登録してください。"
+            exit 1
+          fi
+          if ! ssh-keyscan -p "$DEPLOY_SSH_PORT" -T 10 "$DEPLOY_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "::warning::ssh-keyscan に失敗しました。StrictHostKeyChecking=accept-new で接続を試みます。"
+          fi
+
+      - name: Deploy theme via rsync over SSH
+        env:
+          SSH_USER: ${{ secrets.STG_SSH_USER }}
+        run: |
+          REMOTE="${SSH_USER}@${DEPLOY_SSH_HOST}:${DEPLOY_THEME_DIR}"
+          SSH_CMD="ssh -p ${DEPLOY_SSH_PORT} -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new"
+          rsync -avz --delete \
+            -e "$SSH_CMD" \
+            --exclude '.git*' \
+            --exclude '.github/' \
+            --exclude '.nova/' \
+            --exclude '.vscode/' \
+            --exclude 'node_modules/' \
+            --exclude 'package.json' \
+            --exclude 'package-lock.json' \
+            --exclude 'vite.config.js' \
+            --exclude 'assets/scss/' \
+            --exclude '*.scss' \
+            --exclude 'assets/scss/styles-entry.js' \
+            --exclude '.DS_Store' \
+            --exclude 'assets/manifest/' \
+            theme/ "$REMOTE"
+
+      - name: Deploy asset manifest via rsync over SSH
+        env:
+          SSH_USER: ${{ secrets.STG_SSH_USER }}
+        run: |
+          REMOTE="${SSH_USER}@${DEPLOY_SSH_HOST}:${DEPLOY_THEME_DIR}assets/manifest/"
+          SSH_CMD="ssh -p ${DEPLOY_SSH_PORT} -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new"
+          rsync -avz --delete -e "$SSH_CMD" theme/assets/manifest/ "$REMOTE"
+
+  deploy-production:
+    name: Deploy to Production (SSH)
+    needs: build-theme
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOY_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      DEPLOY_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      DEPLOY_THEME_DIR: public_html/contentslibrary.ytl.jp/wp-content/themes/ytl-archive/
+    steps:
+      - name: Download built theme
+        uses: actions/download-artifact@v4
+        with:
+          name: theme-dist
+          path: theme
+
+      - name: Setup SSH and validate secrets
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: |
+          if [ -z "$SSH_USER" ] || [ -z "$SSH_PRIVATE_KEY" ] || [ -z "$DEPLOY_SSH_HOST" ] || [ -z "$DEPLOY_SSH_PORT" ]; then
+            echo "::error::PROD_SSH_USER / PROD_SSH_PRIVATE_KEY / PROD_SSH_HOST / PROD_SSH_PORT のいずれかが未設定です。"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if ! ssh-keygen -l -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            echo "::error::PROD_SSH_PRIVATE_KEY の形式が不正です。秘密鍵全文（BEGIN/END 行を含む）を登録してください。"
+            exit 1
+          fi
+          if ! ssh-keyscan -p "$DEPLOY_SSH_PORT" -T 10 "$DEPLOY_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "::warning::ssh-keyscan に失敗しました。StrictHostKeyChecking=accept-new で接続を試みます。"
+          fi
+
+      - name: Deploy theme via rsync over SSH
+        env:
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: |
+          REMOTE="${SSH_USER}@${DEPLOY_SSH_HOST}:${DEPLOY_THEME_DIR}"
+          SSH_CMD="ssh -p ${DEPLOY_SSH_PORT} -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new"
+          rsync -avz --delete \
+            -e "$SSH_CMD" \
+            --exclude '.git*' \
+            --exclude '.github/' \
+            --exclude '.nova/' \
+            --exclude '.vscode/' \
+            --exclude 'node_modules/' \
+            --exclude 'package.json' \
+            --exclude 'package-lock.json' \
+            --exclude 'vite.config.js' \
+            --exclude 'assets/scss/' \
+            --exclude '*.scss' \
+            --exclude 'assets/scss/styles-entry.js' \
+            --exclude '*.map' \
+            --exclude '.DS_Store' \
+            --exclude 'assets/manifest/' \
+            theme/ "$REMOTE"
+
+      - name: Deploy asset manifest via rsync over SSH
+        env:
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: |
+          REMOTE="${SSH_USER}@${DEPLOY_SSH_HOST}:${DEPLOY_THEME_DIR}assets/manifest/"
+          SSH_CMD="ssh -p ${DEPLOY_SSH_PORT} -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new"
+          rsync -avz --delete -e "$SSH_CMD" theme/assets/manifest/ "$REMOTE"

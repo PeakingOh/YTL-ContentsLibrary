@@ -1,4 +1,44 @@
-node_modules
-assets/css
-package-lock.json
-package.json
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+theme/node_modules/
+
+# Secrets / local overrides
+.env
+.env.*
+.lando.local.yml
+
+# WordPress core (managed on server / Lando)
+wordpress/
+
+# Database dumps (local sync only)
+database/*
+!database/.gitkeep
+
+# IDE / editor
+.idea/
+.vscode/
+theme/.vscode/
+.nova/
+theme/.nova/
+*.swp
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Cursor
+.cursor/
+
+# Theme: Vite / Sass build artifacts (sources stay in git; CSS built via Vite / CI)
+theme/assets/css/
+theme/assets/.vite-tmp/
+
+# Theme: asset content-hash manifest (generated in CI only)
+theme/assets/manifest/

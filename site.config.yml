@@ -1,0 +1,24 @@
+# ytl-archive 環境設定（値の正本。テンプレート置換・ドキュメント用）
+# SSH パスはログイン後ホームからの相対パス。URL は末尾スラッシュなし。
+
+app_name: ytl-contentslibrary
+theme_slug: ytl-archive
+local_url: https://ytl-contentslibrary.lndo.site
+github_repo: PeakingOh/ytl-archive
+php: "8.5"
+
+staging:
+  host: peakingoh002.xsrv.jp
+  port: 10022
+  wp_path: peakingoh-dev.com/public_html/ytl-contentslibrary
+  theme_dir: peakingoh-dev.com/public_html/ytl-contentslibrary/wp-content/themes/contentslibrary/
+  url: https://ytl-contentslibrary.peakingoh-dev.com
+  ssh_identity: /user/.ssh/peakingoh.pem
+
+production:
+  host: www339.conoha.ne.jp
+  port: 8022
+  wp_path: public_html/contentslibrary.ytl.jp
+  theme_dir: public_html/contentslibrary.ytl.jp/wp-content/themes/ytl-archive/
+  url: https://contentslibrary.ytl.jp
+  ssh_identity: /user/.ssh/peakingoh_rsa.pem

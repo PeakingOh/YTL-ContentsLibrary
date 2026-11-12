@@ -1,0 +1,19 @@
+# cp .lando.local.yml.example .lando.local.yml して、ユーザー名だけ編集する（コミットしない）
+# Lando はホストの ~/.ssh を /user/.ssh にマウントする。
+# STG_SSH_USER / PROD_SSH_USER は GitHub Secrets と同じ値。
+# ホスト、ポート、パス、URL、鍵パスは site.config.yml と同じ値を入れる。
+
+tooling:
+  sync-staging:
+    env:
+      STG_SSH_USER: CHANGE_ME
+      STG_SSH_HOST: peakingoh002.xsrv.jp
+      STG_SSH_PORT: "10022"
+      STG_WP_PATH: peakingoh-dev.com/public_html/ytl-contentslibrary
+      STG_URL: https://ytl-contentslibrary.peakingoh-dev.com
+      STG_SSH_IDENTITY: /user/.ssh/peakingoh.pem
+      PROD_SSH_USER: CHANGE_ME
+      PROD_SSH_HOST: www339.conoha.ne.jp
+      PROD_SSH_PORT: "8022"
+      PROD_WP_PATH: public_html/contentslibrary.ytl.jp
+      PROD_SSH_IDENTITY: /user/.ssh/peakingoh_rsa.pem
