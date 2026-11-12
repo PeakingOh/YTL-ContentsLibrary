@@ -112,89 +112,114 @@ document.querySelectorAll('.swiper-slide').forEach(slide => {
 
 
 jQuery(function($){
+  // ページ内の投稿タイプを結果エリアの有無から判定（イベントの二重登録を避ける）
+  var postType = $('#video_library-results').length
+    ? 'video_library'
+    : ($('#material-results').length ? 'material' : null);
 
-  // 初期設定
-  var postTypes = ['video_library','material'];
+  var slugToPostType = {
+    'video-library': 'video_library',
+    'material': 'material'
+  };
 
-  postTypes.forEach(function(postType){
-      var ajaxurl = PostTypeAjax[postType];
-      var resultId = '#' + postType + '-results';
-      var storageKey = postType + 'Filter';
-
-      // ページロード時の LocalStorage確認
-      var filter = JSON.parse(localStorage.getItem(storageKey));
-      if(filter){
-          var parent = filter.parent;
-          var term = filter.term;
-
-          $('.tab-button[data-parent="'+parent+'"]').addClass('active');
-          $('.child-buttons[data-parent="'+parent+'"]').show();
-          $('.child-button[data-term="'+term+'"]').addClass('active');
-
-          fetchPosts(postType, ajaxurl, parent, term);
-          localStorage.removeItem(storageKey);
-      }
-
-      // 親タブクリック
-      $(document).on('click', '.tab-button', function(){
-          var parent = $(this).data('parent');
-          $(this).siblings().removeClass('active');
-          $(this).addClass('active');
-
-          $('.child-buttons').hide();
-          $('.child-buttons[data-parent="'+parent+'"]').show();
-
-          if($('.child-buttons[data-parent="'+parent+'"]').length === 0){
-              fetchPosts(postType, ajaxurl, parent, 'all');
-          }
-      });
-
-      // 子ボタンクリック
-      $(document).on('click', '.child-button', function(){
-          var parent = $(this).closest('.child-buttons').data('parent');
-          var term = $(this).data('term');
-
-          $(this).siblings().removeClass('active');
-          $(this).addClass('active');
-
-          fetchPosts(postType, ajaxurl, parent, term);
-      });
-
-      // 「もっと見る」ボタン用
-        $(document).on('click', '.library-more', function(){
-          var parent = $(this).data('parent');
-          var child = $(this).data('child') || 'all';
-          var postType = $(this).data('post-type'); // 動画ライブラリ or スライド資料
-      
-          // localStorage に保存
-          localStorage.setItem(storageKey, JSON.stringify({parent: parent, term: child}));
-      
-          // 遷移先のIDを決める
-          var targetId = postType === 'video-library' ? 'video_library-results' : 'material-results';
-      
-          // 遷移URL生成
-          if(postType) {
-              window.location.href = '/' + postType + '/#' + targetId;
-          }
-      });    
-  });
-
-  function fetchPosts(postType, ajaxurl, parent, term){
-      $.ajax({
-          url: ajaxurl,
-          type: 'POST',
-          data: {
-              action: 'fetch_' + postType,
-              post_type: postType,
-              parent: parent,
-              term: term
-          },
-          success: function(res){
-              $('#'+postType+'-results').html(res);
-          }
-      });
+  function storageKeyFor(type) {
+    return type + 'Filter';
   }
 
+  function fetchPosts(type, parent, term) {
+    var restUrl = (typeof PostTypeAjax !== 'undefined' && PostTypeAjax.restUrl)
+      ? PostTypeAjax.restUrl
+      : null;
+
+    if (!restUrl) {
+      console.error('[ytl] PostTypeAjax.restUrl が未定義です');
+      return;
+    }
+
+    $.ajax({
+      url: restUrl,
+      type: 'GET',
+      dataType: 'json',
+      data: {
+        post_type: type,
+        parent: parent,
+        term: term
+      },
+      success: function(res) {
+        var html = (res && typeof res.html === 'string') ? res.html : '';
+        $('#' + type + '-results').html(html);
+      },
+      error: function(xhr, status, error) {
+        console.error('[ytl] library-posts fetch failed', status, error, xhr && xhr.status);
+      }
+    });
+  }
+
+  // 「もっと見る」からの復帰（localStorage）
+  if (postType) {
+    var saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(storageKeyFor(postType)));
+    } catch (e) {
+      saved = null;
+    }
+
+    if (saved && saved.parent) {
+      var parent = saved.parent;
+      var term = saved.term || 'all';
+
+      $('.tab-button[data-parent="' + parent + '"]').addClass('active');
+      $('.child-buttons[data-parent="' + parent + '"]').show();
+      $('.child-button[data-term="' + term + '"]').addClass('active');
+
+      fetchPosts(postType, parent, term);
+      localStorage.removeItem(storageKeyFor(postType));
+    }
+  }
+
+  // 親タブ
+  $(document).on('click', '.tab-button', function(){
+    if (!postType) return;
+
+    var parent = $(this).data('parent');
+    $(this).siblings().removeClass('active');
+    $(this).addClass('active');
+
+    $('.child-buttons').hide();
+    $('.child-buttons[data-parent="' + parent + '"]').show();
+
+    if ($('.child-buttons[data-parent="' + parent + '"]').length === 0) {
+      fetchPosts(postType, parent, 'all');
+    }
+  });
+
+  // 子タブ
+  $(document).on('click', '.child-button', function(){
+    if (!postType) return;
+
+    var parent = $(this).closest('.child-buttons').data('parent');
+    var term = $(this).data('term');
+
+    $(this).siblings().removeClass('active');
+    $(this).addClass('active');
+
+    fetchPosts(postType, parent, term);
+  });
+
+  // カテゴリページの「もっと見る」
+  $(document).on('click', '.library-more', function(){
+    var parent = $(this).data('parent');
+    var child = $(this).data('child') || 'all';
+    var slug = $(this).data('post-type'); // video-library | material
+    var type = slugToPostType[slug];
+
+    if (!type) return;
+
+    localStorage.setItem(storageKeyFor(type), JSON.stringify({ parent: parent, term: child }));
+
+    var targetId = type === 'video_library' ? 'video_library-results' : 'material-results';
+    window.location.href = '/' + slug + '/#' + targetId;
+  });
 });
 
 jQuery(document).ready(function($){

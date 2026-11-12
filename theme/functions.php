@@ -1,6 +1,7 @@
 <?php
 
 require_once get_template_directory() . '/inc/assets.php';
+require_once get_template_directory() . '/inc/env-uploads.php';
 
 // アイキャッチ有効化
 add_theme_support('post-thumbnails');
@@ -182,146 +183,195 @@ function custom_post_type_id_rewrite() {
 
 
 
-// 投稿タイプごとの Ajax 処理をまとめて登録
-function register_post_type_ajax($post_types = ['video_library', 'material']) {
-  foreach ($post_types as $type) {
-      add_action("wp_ajax_fetch_{$type}", 'fetch_post_type_posts');
-      add_action("wp_ajax_nopriv_fetch_{$type}", 'fetch_post_type_posts');
-  }
-}
-add_action('init', function() {
-  register_post_type_ajax();
-});
+/**
+ * ライブラリ絞り込み用の投稿 HTML を生成
+ *
+ * 本番 nginx が /wp-admin/ を 403 にするため、admin-ajax ではなく REST から使う。
+ */
+function ytl_get_library_posts_html( $post_type, $parent = '', $term = '' ) {
+  $post_type = sanitize_text_field( (string) $post_type );
+  $parent    = sanitize_text_field( (string) $parent );
+  $term      = sanitize_text_field( (string) $term );
 
-// 共通の Ajax 投稿取得関数
-function fetch_post_type_posts() {
-  $post_type = sanitize_text_field($_POST['post_type'] ?? '');
-  $parent    = sanitize_text_field($_POST['parent'] ?? '');
-  $term      = sanitize_text_field($_POST['term'] ?? '');
-
-  if (!$post_type || !in_array($post_type, ['video_library', 'material'])) {
-      wp_die('不正な投稿タイプです');
+  if ( ! $post_type || ! in_array( $post_type, array( 'video_library', 'material' ), true ) ) {
+    return '<p class="nopost">不正な投稿タイプです</p>';
   }
 
-  $tax_query = [];
+  $tax_query = array();
 
-  if ($parent) {
-      $parent_term = get_term_by('slug', $parent, 'common_category');
+  if ( $parent ) {
+    $parent_term = get_term_by( 'slug', $parent, 'common_category' );
 
-      if ($parent_term) {
-          if ($term === 'all') {
-              $child_terms = get_terms([
-                  'taxonomy'   => 'common_category',
-                  'hide_empty' => true,
-                  'parent'     => $parent_term->term_id,
-                  'fields'     => 'ids'
-              ]);
+    if ( $parent_term ) {
+      if ( $term === 'all' ) {
+        $child_terms = get_terms(
+          array(
+            'taxonomy'   => 'common_category',
+            'hide_empty' => true,
+            'parent'     => $parent_term->term_id,
+            'fields'     => 'ids',
+          )
+        );
 
-              $terms = array_merge([$parent_term->term_id], $child_terms);
+        if ( is_wp_error( $child_terms ) ) {
+          $child_terms = array();
+        }
 
-              $tax_query[] = [
-                  'taxonomy' => 'common_category',
-                  'field'    => 'term_id',
-                  'terms'    => $terms,
-                  'operator' => 'IN'
-              ];
-          } else {
-              $tax_query[] = [
-                  'taxonomy' => 'common_category',
-                  'field'    => 'slug',
-                  'terms'    => $term,
-              ];
-          }
+        $terms = array_merge( array( $parent_term->term_id ), $child_terms );
+
+        $tax_query[] = array(
+          'taxonomy' => 'common_category',
+          'field'    => 'term_id',
+          'terms'    => $terms,
+          'operator' => 'IN',
+        );
+      } else {
+        $tax_query[] = array(
+          'taxonomy' => 'common_category',
+          'field'    => 'slug',
+          'terms'    => $term,
+        );
       }
+    }
   }
 
-  $args = [
+  $query = new WP_Query(
+    array(
       'post_type'      => $post_type,
       'posts_per_page' => -1,
-      'tax_query'      => $tax_query
-  ];
+      'tax_query'      => $tax_query,
+    )
+  );
 
-  $query = new WP_Query($args);
+  ob_start();
 
-  if ($query->have_posts()) {
-      echo '<h3>検索結果</h3>';
-      echo '<div class="post-items">';
+  if ( $query->have_posts() ) {
+    echo '<h3>検索結果</h3>';
+    echo '<div class="post-items">';
 
-      while ($query->have_posts()) {
-          $query->the_post();
+    while ( $query->have_posts() ) {
+      $query->the_post();
 
-          $permalink = get_permalink();
-          $categories = get_the_terms(get_the_ID(), 'common_category');
-          $category_names = [];
-          $parent_class = '';
+      $permalink  = get_permalink();
+      $categories = get_the_terms( get_the_ID(), 'common_category' );
 
-          if ($categories && !is_wp_error($categories)) {
-              foreach ($categories as $cat) {
-                  $category_names[] = $cat->name;
-
-                  if ($cat->parent) {
-                      $parent = get_term($cat->parent, 'common_category');
-                      $parent_class = 'parent-cat-' . $parent->slug;
-                  } else {
-                      $parent_class = 'parent-cat-' . $cat->slug;
-                  }
-              }
-          }
-
-          $category_names_str = implode(', ', $category_names);
-
-          echo '<div class="post-contents">';
-          echo '<a href="'.esc_url($permalink).'" class="post-item">';
-          if (has_post_thumbnail()) the_post_thumbnail('large');
-          echo '<div class="text-box">';
-          echo '<h4>'.get_the_title().'</h4>';
-          echo '<p>'.get_the_excerpt().'</p>';
-          if ($categories && !is_wp_error($categories)) {
-            foreach ($categories as $cat) {
-        
-                // 親カテゴリーがいる場合は親のスラッグをクラスに
-                if ($cat->parent) {
-                    $parent = get_term($cat->parent, 'common_category');
-                    $parent_class = 'parent-cat-' . $parent->slug;
-                } else {
-                    $parent_class = 'parent-cat-' . $cat->slug;
-                }
-        
-                // 個別に出力
-                echo '<p class="post-categories ' . esc_attr($parent_class) . '">' . esc_html($cat->name) . '</p>';
-            }
-          }
-          echo '</div>';
-          echo '</a>';
-          echo '</div>';
+      echo '<div class="post-contents">';
+      echo '<a href="' . esc_url( $permalink ) . '" class="post-item">';
+      if ( has_post_thumbnail() ) {
+        the_post_thumbnail( 'large' );
       }
-
+      echo '<div class="text-box">';
+      echo '<h4>' . esc_html( get_the_title() ) . '</h4>';
+      echo '<p>' . esc_html( get_the_excerpt() ) . '</p>';
+      if ( $categories && ! is_wp_error( $categories ) ) {
+        foreach ( $categories as $cat ) {
+          if ( $cat->parent ) {
+            $parent_term  = get_term( $cat->parent, 'common_category' );
+            $parent_class = $parent_term && ! is_wp_error( $parent_term )
+              ? 'parent-cat-' . $parent_term->slug
+              : 'parent-cat-default';
+          } else {
+            $parent_class = 'parent-cat-' . $cat->slug;
+          }
+          echo '<p class="post-categories ' . esc_attr( $parent_class ) . '">' . esc_html( $cat->name ) . '</p>';
+        }
+      }
       echo '</div>';
+      echo '</a>';
+      echo '</div>';
+    }
+
+    echo '</div>';
   } else {
-      echo '<p class="nopost">関連する投稿はまだありません。</p>';
+    echo '<p class="nopost">関連する投稿はまだありません。</p>';
   }
 
   wp_reset_postdata();
+
+  return (string) ob_get_clean();
+}
+
+// 後方互換: admin-ajax（ローカル等で /wp-admin が使える環境向け）
+function register_post_type_ajax( $post_types = array( 'video_library', 'material' ) ) {
+  foreach ( $post_types as $type ) {
+    add_action( "wp_ajax_fetch_{$type}", 'fetch_post_type_posts' );
+    add_action( "wp_ajax_nopriv_fetch_{$type}", 'fetch_post_type_posts' );
+  }
+}
+add_action(
+  'init',
+  function () {
+    register_post_type_ajax();
+  }
+);
+
+function fetch_post_type_posts() {
+  $post_type = sanitize_text_field( wp_unslash( $_POST['post_type'] ?? '' ) );
+  $parent    = sanitize_text_field( wp_unslash( $_POST['parent'] ?? '' ) );
+  $term      = sanitize_text_field( wp_unslash( $_POST['term'] ?? '' ) );
+
+  echo ytl_get_library_posts_html( $post_type, $parent, $term );
   wp_die();
 }
 
-// JSを読み込む関数（汎用）
-function enqueue_post_type_scripts() {
-  wp_enqueue_script(
-      'post-type-filter-js',
-      get_template_directory_uri() . '/js/post-type-filter.js',
-      ['jquery'],
-      '1.0',
-      true
-  );
+// 本番で /wp-admin が 403 でも使える REST エンドポイント
+function ytl_register_library_posts_rest_route() {
+  register_rest_route(
+    'ytl/v1',
+    '/library-posts',
+    array(
+      'methods'             => 'GET',
+      'permission_callback' => '__return_true',
+      'args'                => array(
+        'post_type' => array(
+          'required' => true,
+          'type'     => 'string',
+        ),
+        'parent'    => array(
+          'required' => false,
+          'type'     => 'string',
+          'default'  => '',
+        ),
+        'term'      => array(
+          'required' => false,
+          'type'     => 'string',
+          'default'  => '',
+        ),
+      ),
+      'callback'            => function ( WP_REST_Request $request ) {
+        $html = ytl_get_library_posts_html(
+          $request->get_param( 'post_type' ),
+          $request->get_param( 'parent' ),
+          $request->get_param( 'term' )
+        );
 
-  // 各投稿タイプの Ajax URL を渡す
-  wp_localize_script('post-type-filter-js', 'PostTypeAjax', [
-      'video_library' => admin_url('admin-ajax.php'),
-      'material'     => admin_url('admin-ajax.php'),
-  ]);
+        return new WP_REST_Response(
+          array(
+            'html' => $html,
+          ),
+          200
+        );
+      },
+    )
+  );
 }
-add_action('wp_enqueue_scripts', 'enqueue_post_type_scripts');
+add_action( 'rest_api_init', 'ytl_register_library_posts_rest_route' );
+
+// フロント用に REST URL を渡す（scripts.js 自体は footer で CDN jQuery の後に読み込む）
+function enqueue_post_type_scripts() {
+  // 実ファイルの無い handle だと環境によって localize が欠けるため、空スクリプトで登録する
+  wp_register_script( 'ytl-scripts-config', false, array(), null, true );
+  wp_enqueue_script( 'ytl-scripts-config' );
+
+  wp_localize_script(
+    'ytl-scripts-config',
+    'PostTypeAjax',
+    array(
+      'restUrl' => esc_url_raw( rest_url( 'ytl/v1/library-posts' ) ),
+    )
+  );
+}
+add_action( 'wp_enqueue_scripts', 'enqueue_post_type_scripts' );
 
 
 

@@ -21,4 +21,5 @@ production:
   wp_path: public_html/contentslibrary.ytl.jp
   theme_dir: public_html/contentslibrary.ytl.jp/wp-content/themes/ytl-archive/
   url: https://contentslibrary.ytl.jp
+  uploads_url: https://contentslibrary.ytl.jp/wp-content/uploads
   ssh_identity: /user/.ssh/peakingoh_rsa.pem
