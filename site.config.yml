@@ -4,7 +4,7 @@
 app_name: ytl-contentslibrary
 theme_slug: ytl-archive
 local_url: https://ytl-contentslibrary.lndo.site
-github_repo: PeakingOh/ytl-archive
+github_repo: PeakingOh/YTL-ContentsLibrary
 php: "8.5"
 
 staging:
